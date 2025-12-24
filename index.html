@@ -1266,13 +1266,13 @@
         // ==================== FIREBASE 설정 ====================
         // ⚠️ 아래 설정을 본인의 Firebase 프로젝트 정보로 변경하세요!
         const firebaseConfig = {
-            apiKey: "AIzaSyBlOOYHY-nPtbEM6URacDV-MA9ccm1br74",
-            authDomain: "vampyr-tracker.firebaseapp.com",
-            databaseURL: "https://vampyr-tracker-default-rtdb.asia-southeast1.firebasedatabase.app",
-            projectId: "vampyr-tracker",
-            storageBucket: "vampyr-tracker.firebasestorage.app",
-            messagingSenderId: "228992340552",
-            appId: "1:228992340552:web:0fe1d06c421987e7e17e7d"
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT",
+            storageBucket: "YOUR_PROJECT.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
         };
         
         // Firebase 초기화 (실패 시 localStorage 사용)
@@ -1371,7 +1371,7 @@
         async function initSuperAdmin() {
             if (!appData.superAdminPwHash) {
                 appData.superAdminPwHash = await sha256('tnals9328@@');
-                await saveData();
+                saveData();
             }
         }
         
@@ -1408,14 +1408,19 @@
             try {
                 let saved = null;
                 
+                // 먼저 localStorage에서 로드 (즉시 사용 가능)
+                const localData = localStorage.getItem('vampyrTrackerV8');
+                if (localData) saved = JSON.parse(localData);
+                
+                // Firebase가 설정되어 있으면 Firebase에서 로드
                 if (useFirebase && database) {
-                    // Firebase에서 로드
-                    const snapshot = await database.ref(DB_REF).once('value');
-                    saved = snapshot.val();
-                } else {
-                    // localStorage에서 로드
-                    const localData = localStorage.getItem('vampyrTrackerV8');
-                    if (localData) saved = JSON.parse(localData);
+                    try {
+                        const snapshot = await database.ref(DB_REF).once('value');
+                        const firebaseData = snapshot.val();
+                        if (firebaseData) saved = firebaseData;
+                    } catch (e) {
+                        console.log('Firebase 로드 실패, localStorage 사용:', e);
+                    }
                 }
                 
                 if (saved) {
@@ -1440,7 +1445,7 @@
                     appData.blacklist = [...INITIAL_BLACKLIST];
                     appData.dateConfig = { startDate: '2025-12-23', endDate: '' };
                     appData.gistConfig = { token: '' };
-                    await saveData(); // 초기 데이터 저장
+                    saveData(); // 초기 데이터 저장
                 }
                 isDataLoaded = true;
             } catch (error) {
@@ -1455,19 +1460,20 @@
             }
         }
         
-        async function saveData() {
+        // 동기적으로 localStorage에 저장하고, Firebase는 백그라운드에서 처리
+        function saveData() {
             try {
+                // localStorage에 즉시 저장 (동기)
+                localStorage.setItem('vampyrTrackerV8', JSON.stringify(appData));
+                
+                // Firebase가 설정되어 있으면 백그라운드에서 저장
                 if (useFirebase && database) {
-                    // Firebase에 저장
-                    await database.ref(DB_REF).set(appData);
-                } else {
-                    // localStorage에 저장
-                    localStorage.setItem('vampyrTrackerV8', JSON.stringify(appData));
+                    database.ref(DB_REF).set(appData).catch(e => {
+                        console.error('Firebase 저장 오류:', e);
+                    });
                 }
             } catch (error) {
                 console.error('데이터 저장 오류:', error);
-                // Firebase 실패 시 localStorage에 백업
-                localStorage.setItem('vampyrTrackerV8', JSON.stringify(appData));
             }
         }
         
@@ -2264,7 +2270,18 @@
             const id = document.getElementById('loginId').value.trim();
             const pw = document.getElementById('loginPw').value;
             const remember = document.getElementById('loginRemember').checked;
-            const ip = await getUserIP();
+            
+            if (!id || !pw) {
+                showToast('아이디와 비밀번호를 입력하세요', 'error');
+                return;
+            }
+            
+            let ip = 'Unknown';
+            try {
+                ip = await getUserIP();
+            } catch (e) {
+                ip = 'Unknown';
+            }
             
             const loginLog = {
                 id: Date.now().toString(),
@@ -3178,7 +3195,18 @@
         }
         
         function fileToBase64(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
-        async function getUserIP() { try { return (await (await fetch('https://api.ipify.org?format=json')).json()).ip; } catch { return 'Unknown'; } }
+        async function getUserIP() { 
+            try { 
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000); // 3초 타임아웃
+                const response = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+                clearTimeout(timeoutId);
+                const data = await response.json();
+                return data.ip; 
+            } catch { 
+                return 'Unknown'; 
+            } 
+        }
         
         function showToast(msg, type = 'success') {
             const container = document.getElementById('toastContainer');
