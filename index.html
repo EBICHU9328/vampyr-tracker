@@ -719,7 +719,7 @@
             <div class="nav-tab active" data-panel="home">메인</div>
             <div class="nav-tab" data-panel="upload">참여 등록</div>
             <div class="nav-tab" data-panel="stats">통계 현황</div>
-            <div class="nav-tab" data-panel="absent">메인 캐릭터 미참여</div>
+            <div class="nav-tab" data-panel="absent">메인캐 미참여</div>
             <div class="nav-tab admin-tab" data-panel="admin" id="adminTab" style="display:none;">관리자</div>
             <div class="nav-tab" data-panel="login" id="loginTab">관리자 로그인</div>
         </div>
@@ -1264,18 +1264,34 @@
         }
         
         // ==================== FIREBASE 설정 ====================
-  apiKey: "AIzaSyBlOOYHY-nPtbEM6URacDV-MA9ccm1br74",
-  authDomain: "vampyr-tracker.firebaseapp.com",
-  databaseURL: "https://vampyr-tracker-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "vampyr-tracker",
-  storageBucket: "vampyr-tracker.firebasestorage.app",
-  messagingSenderId: "228992340552",
-  appId: "1:228992340552:web:0fe1d06c421987e7e17e7d"
-};
+        // ⚠️ 아래 설정을 본인의 Firebase 프로젝트 정보로 변경하세요!
+        const firebaseConfig = {
+            apiKey: "AIzaSyBlOOYHY-nPtbEM6URacDV-MA9ccm1br74",
+            authDomain: "vampyr-tracker.firebaseapp.com",
+            databaseURL: "https://vampyr-tracker-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "vampyr-tracker",
+            storageBucket: "vampyr-tracker.firebasestorage.app",
+            messagingSenderId: "228992340552",
+            appId: "1:228992340552:web:0fe1d06c421987e7e17e7d"
+        };
         
-        // Firebase 초기화
-        firebase.initializeApp(firebaseConfig);
-        const database = firebase.database();
+        // Firebase 초기화 (실패 시 localStorage 사용)
+        let database = null;
+        let useFirebase = false;
+        
+        try {
+            if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                firebase.initializeApp(firebaseConfig);
+                database = firebase.database();
+                useFirebase = true;
+                console.log('Firebase 연결 성공');
+            } else {
+                console.log('Firebase 미설정 - localStorage 사용');
+            }
+        } catch (e) {
+            console.log('Firebase 초기화 실패 - localStorage 사용:', e);
+        }
+        
         const DB_REF = 'vampyrTracker'; // 데이터베이스 경로
         
         const SUPER_ADMIN_ID = 'tjdals9328';
@@ -1305,23 +1321,40 @@
         let isDataLoaded = false;
         
         async function init() {
-            showProcessing('데이터 로딩 중...');
-            await loadData();
-            await initSuperAdmin();
-            checkAdminSession();
-            setupEventListeners();
-            updateAllSelects();
-            renderAll();
-            setDefaultDates();
-            startGistAutoSync();
-            hideProcessing();
-            
-            // 실시간 데이터 동기화 리스너
-            setupRealtimeListener();
+            try {
+                showProcessing('데이터 로딩 중...');
+                await loadData();
+                await initSuperAdmin();
+                checkAdminSession();
+                setupEventListeners();
+                updateAllSelects();
+                renderAll();
+                setDefaultDates();
+                startGistAutoSync();
+                hideProcessing();
+                
+                // 실시간 데이터 동기화 리스너
+                setupRealtimeListener();
+                
+                // 저장소 상태 표시
+                if (useFirebase) {
+                    console.log('✅ Firebase 모드로 실행 중');
+                } else {
+                    console.log('⚠️ localStorage 모드로 실행 중 (Firebase 미설정)');
+                }
+            } catch (error) {
+                console.error('초기화 오류:', error);
+                hideProcessing();
+                // 오류가 나도 기본 UI는 표시
+                setupEventListeners();
+                renderAll();
+            }
         }
         
         // Firebase 실시간 리스너 (다른 사용자의 변경 감지)
         function setupRealtimeListener() {
+            if (!useFirebase || !database) return; // Firebase 미사용 시 스킵
+            
             database.ref(DB_REF).on('value', (snapshot) => {
                 if (!isDataLoaded) return; // 초기 로드 시 무시
                 const newData = snapshot.val();
@@ -1373,8 +1406,17 @@
         
         async function loadData() {
             try {
-                const snapshot = await database.ref(DB_REF).once('value');
-                const saved = snapshot.val();
+                let saved = null;
+                
+                if (useFirebase && database) {
+                    // Firebase에서 로드
+                    const snapshot = await database.ref(DB_REF).once('value');
+                    saved = snapshot.val();
+                } else {
+                    // localStorage에서 로드
+                    const localData = localStorage.getItem('vampyrTrackerV8');
+                    if (localData) saved = JSON.parse(localData);
+                }
                 
                 if (saved) {
                     appData = saved;
@@ -1389,6 +1431,8 @@
                     if (!appData.gistData) appData.gistData = [];
                     if (!appData.logs) appData.logs = [];
                     if (!appData.admins) appData.admins = [];
+                    if (!appData.guilds) appData.guilds = [...INITIAL_GUILDS];
+                    if (!appData.members) appData.members = JSON.parse(JSON.stringify(INITIAL_MEMBERS));
                 } else {
                     // 초기 데이터 설정
                     appData.guilds = [...INITIAL_GUILDS];
@@ -1400,17 +1444,30 @@
                 }
                 isDataLoaded = true;
             } catch (error) {
-                console.error('Firebase 로드 오류:', error);
-                showToast('데이터 로드 실패. 새로고침 해주세요.', 'error');
+                console.error('데이터 로드 오류:', error);
+                // 오류 시 기본값으로 초기화
+                appData.guilds = [...INITIAL_GUILDS];
+                appData.members = JSON.parse(JSON.stringify(INITIAL_MEMBERS));
+                appData.blacklist = [...INITIAL_BLACKLIST];
+                appData.dateConfig = { startDate: '2025-12-23', endDate: '' };
+                appData.gistConfig = { token: '' };
+                isDataLoaded = true;
             }
         }
         
         async function saveData() {
             try {
-                await database.ref(DB_REF).set(appData);
+                if (useFirebase && database) {
+                    // Firebase에 저장
+                    await database.ref(DB_REF).set(appData);
+                } else {
+                    // localStorage에 저장
+                    localStorage.setItem('vampyrTrackerV8', JSON.stringify(appData));
+                }
             } catch (error) {
-                console.error('Firebase 저장 오류:', error);
-                showToast('데이터 저장 실패', 'error');
+                console.error('데이터 저장 오류:', error);
+                // Firebase 실패 시 localStorage에 백업
+                localStorage.setItem('vampyrTrackerV8', JSON.stringify(appData));
             }
         }
         
@@ -1953,7 +2010,7 @@
                 </div>
                 ${absentChar ? `
                 <div class="confirm-item">
-                    <span class="confirm-label">메인 캐릭터 미참여</span>
+                    <span class="confirm-label">메인캐 미참여</span>
                     <span class="confirm-value" style="color:var(--accent-purple);">${absentChar}</span>
                 </div>
                 ` : ''}
@@ -3125,6 +3182,7 @@
         
         function showToast(msg, type = 'success') {
             const container = document.getElementById('toastContainer');
+            if (!container) return;
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
             toast.innerHTML = `<span style="font-size:1.2rem;">${{success:'✓',warning:'⚠',error:'✕'}[type]}</span><span>${msg}</span>`;
@@ -3132,8 +3190,16 @@
             setTimeout(() => { toast.style.animation = 'slideIn 0.3s ease reverse'; setTimeout(() => toast.remove(), 300); }, 3000);
         }
         
-        function showProcessing(text) { document.getElementById('processingText').textContent = text; document.getElementById('processingOverlay').classList.add('active'); }
-        function hideProcessing() { document.getElementById('processingOverlay').classList.remove('active'); }
+        function showProcessing(text) { 
+            const textEl = document.getElementById('processingText');
+            const overlayEl = document.getElementById('processingOverlay');
+            if (textEl) textEl.textContent = text;
+            if (overlayEl) overlayEl.classList.add('active');
+        }
+        function hideProcessing() { 
+            const overlayEl = document.getElementById('processingOverlay');
+            if (overlayEl) overlayEl.classList.remove('active');
+        }
         function showImageModal(src) { document.getElementById('modalImage').src = src; document.getElementById('imageModal').classList.add('active'); }
         function closeImageModal() { document.getElementById('imageModal').classList.remove('active'); }
         
